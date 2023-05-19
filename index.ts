@@ -36,7 +36,7 @@ const gifs: string[] = [
 	'https://tenor.com/bF2VS.gif',
 ];
 const streamer: string = 'maciejay';
-const streams: string[] = [];
+const streamerState: { [key: string]: boolean } = {};
 const streamData: Collection<String, StreamData> = new Collection();
 
 let tokenReponse: OAuthReponse | null = null;
@@ -57,13 +57,13 @@ client.on(Events.MessageCreate, async (message) => {
 	// If the author is a bot ignore the message
 	if (message.author.bot) return;
 
-	currencyWatcher(message);
-	heartWatcher(message);
-	gifReplier(message);
+	processCurrency(message);
+	processHeartReaction(message);
+	processGifReply(message);
 });
 
 // Check if message contains any xx.xx€ and convert to DM
-async function currencyWatcher(message: Message) {
+async function processCurrency(message: Message) {
 	if (!message.content.match('([0-9]*.([0-9]*)?)(€)')) return;
 	const price = message.content.match('([0-9]*.([0-9]*))(€)')?.[0].replace('€', '');
 	await message.reply({
@@ -72,7 +72,7 @@ async function currencyWatcher(message: Message) {
 }
 
 // Check if message is from someone and react with heart
-async function heartWatcher(message: Message) {
+async function processHeartReaction(message: Message) {
 	if (message.author.id !== '355793527516692480') return;
 	try {
 		await message.react('🫶');
@@ -82,7 +82,7 @@ async function heartWatcher(message: Message) {
 }
 
 // Check if message is from me and reply with random gif
-async function gifReplier(message: Message) {
+async function processGifReply(message: Message) {
 	if (message.author.id !== '204150777608929280') return;
 	await message.reply({
 		content: gifs.at(Math.floor(Math.random() * gifs.length)),
@@ -184,12 +184,11 @@ async function getStreamInfo(streamer: string) {
 }
 
 async function startTwitchWatcher() {
-	// Check for new streams every minute
 	setInterval(async () => {
 		const newStreams: string[] = [];
 		const streamInfo = await getStreamInfo(streamer);
 
-		if (streamInfo.length >= 1 && streams.indexOf(streamer) < 0) {
+		if (streamInfo.length >= 1 && !streamerState[streamer]) {
 			const userData = await getUserInfo(streamer);
 			const gameData = await getGameInfo(streamInfo[0].game_id);
 
@@ -199,11 +198,11 @@ async function startTwitchWatcher() {
 					.replace('{width}', '500')
 					.replace('{height}', '800');
 
-			streams.push(streamer);
+			streamerState[streamer] = true;
 			newStreams.push(streamer);
 			streamData.set(streamer, streamInfo[0]);
-		} else if (streamInfo.length === 0 && streams.indexOf(streamer) >= 0) {
-			streams.splice(streams.indexOf(streamer));
+		} else if (streamInfo.length === 0 && streamerState[streamer]) {
+			streamerState[streamer] = false;
 			streamData.delete(streamer);
 		}
 
