@@ -1,65 +1,19 @@
 import axios from 'axios';
-import { Client, Events, IntentsBitField, Collection, EmbedBuilder } from 'discord.js';
+import { Client, Events, IntentsBitField, Collection, EmbedBuilder, Message, Channel } from 'discord.js';
 import dotenv from 'dotenv';
 const client = new Client({
 	intents: [IntentsBitField.Flags.Guilds, IntentsBitField.Flags.GuildMessages, IntentsBitField.Flags.MessageContent],
 });
 
-const gifs: string[] = [
-	'https://tenor.com/8HGD.gif',
-	'https://tenor.com/bbzBd.gif',
-	'https://tenor.com/bTlVO.gif',
-	'https://tenor.com/bDjW5.gif',
-	'https://tenor.com/Qblv.gif',
-	'https://tenor.com/wRdI.gif',
-	'https://tenor.com/bF2VS.gif',
-];
+type OAuthReponse = {
+	access_token: string;
+	expires_in: number;
+	valid_until: number;
+	token_type: string;
+};
 
-dotenv.config();
-
-client.on('ready', async () => {
-	await startTwitchWatcher();
-
-	console.log(`Logged in as ${client.user?.username}!`);
-});
-
-client.on(Events.MessageCreate, async (message) => {
-	if (message.author.bot) return;
-
-	if (message.content.match('([0-9]*.([0-9]*)?)(€)')) {
-		const price = message.content.match('([0-9]*.([0-9]*))(€)')?.[0].replace('€', '');
-
-		// Round price to 2 digits
-		// const roundedPrice = Math.round(price * 100) / 100;
-
-		// Display price with 2 digits
-
-		await message.reply({
-			content: `${price}€? Das sind ${(Number(price) * 2).toFixed(2)}DM!`,
-		});
-	}
-
-	if (message.author.id === '') {
-		// Maurice
-		try {
-			await message.react('🫶');
-		} catch (e) {
-			console.error(e);
-		}
-		await message.reply({
-			content: 'EZ fix',
-		});
-	}
-
-	if (message.author.id === '') {
-		// Gregor
-		await message.reply({
-			content: gifs.at(Math.floor(Math.random() * gifs.length)),
-		});
-	}
-});
-
-export type StreamData = {
+// Type for the stream data
+type StreamData = {
 	game_id: string;
 	game_name: string;
 	title: string;
@@ -71,7 +25,73 @@ export type StreamData = {
 	gamePicture: string;
 };
 
+// Random gifs of Idian people
+const gifs: string[] = [
+	'https://tenor.com/8HGD.gif',
+	'https://tenor.com/bbzBd.gif',
+	'https://tenor.com/bTlVO.gif',
+	'https://tenor.com/bDjW5.gif',
+	'https://tenor.com/Qblv.gif',
+	'https://tenor.com/wRdI.gif',
+	'https://tenor.com/bF2VS.gif',
+];
+const streamer: string = 'maciejay';
+const streams: string[] = [];
+const streamData: Collection<String, StreamData> = new Collection();
+
+let tokenReponse: OAuthReponse | null = null;
+
+// Load .env file
+dotenv.config();
+
+// Code startup when bot is ready
+client.on('ready', async () => {
+	// Starting the twitch watcher
+	await startTwitchWatcher();
+
+	console.log(`Logged in as ${client.user?.username}!`);
+});
+
+// Logic for handling messages
+client.on(Events.MessageCreate, async (message) => {
+	// If the author is a bot ignore the message
+	if (message.author.bot) return;
+
+	currencyWatcher(message);
+	heartWatcher(message);
+	gifReplier(message);
+});
+
+// Check if message contains any xx.xx€ and convert to DM
+async function currencyWatcher(message: Message) {
+	if (!message.content.match('([0-9]*.([0-9]*)?)(€)')) return;
+	const price = message.content.match('([0-9]*.([0-9]*))(€)')?.[0].replace('€', '');
+	await message.reply({
+		content: `${price}€? Das sind ${(Number(price) * 2).toFixed(2)}DM!`,
+	});
+}
+
+// Check if message is from someone and react with heart
+async function heartWatcher(message: Message) {
+	if (message.author.id !== '355793527516692480') return;
+	try {
+		await message.react('🫶');
+	} catch (e) {
+		console.error(e);
+	}
+}
+
+// Check if message is from me and reply with random gif
+async function gifReplier(message: Message) {
+	if (message.author.id !== '204150777608929280') return;
+	await message.reply({
+		content: gifs.at(Math.floor(Math.random() * gifs.length)),
+	});
+}
+
+// Get the access token for the twitch api and cache it
 async function getAccessToken() {
+	if (tokenReponse && tokenReponse.valid_until > Date.now()) return tokenReponse;
 	try {
 		const tokenDataResponse = await axios.post(
 			'https://id.twitch.tv/oauth2/token',
@@ -86,83 +106,87 @@ async function getAccessToken() {
 				},
 			}
 		);
-		return tokenDataResponse.data.access_token;
+		tokenReponse = tokenDataResponse.data;
+
+		if (!tokenReponse) return null;
+		tokenReponse.valid_until = Date.now() + tokenReponse.expires_in * 1000;
+
+		return tokenReponse;
 	} catch (e) {
 		console.error(e);
 		return null;
 	}
 }
 
+async function twitchRequest(url: string, method: 'get' | 'post', params?: any, headers?: any, data?: any) {
+	try {
+		const accessToken = (await getAccessToken())?.access_token;
+
+		const response = await axios({
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+				'Client-Id': process.env.TWITCH_CLIENT_ID,
+				...headers,
+			},
+			method,
+			url,
+			params,
+			data,
+		});
+
+		return response.data;
+	} catch (e) {
+		console.error(e);
+		return null;
+	}
+}
+
+// Get the user info for a streamer
 async function getUserInfo(streamer: string) {
 	try {
-		const userInfoResponse = await axios.get('https://api.twitch.tv/helix/users', {
-			headers: {
-				Authorization: `Bearer ${accessToken}`,
-				'Client-Id': process.env.TWITCH_CLIENT_ID,
-			},
-			params: {
-				login: streamer,
-			},
+		const userInfoResponse = await twitchRequest('https://api.twitch.tv/helix/users', 'get', {
+			login: streamer,
 		});
 
-		return userInfoResponse.data.data[0];
+		return userInfoResponse.data[0];
 	} catch (e) {
 		console.error(e);
-		accessToken = await getAccessToken();
 		return null;
 	}
 }
 
+// Get the game info for a game
 async function getGameInfo(game: string) {
 	try {
-		const gameInfoResponse = await axios.get('https://api.twitch.tv/helix/games', {
-			headers: {
-				Authorization: `Bearer ${accessToken}`,
-				'Client-Id': process.env.TWITCH_CLIENT_ID,
-			},
-			params: {
-				id: game,
-			},
+		const gameInfoResponse = await twitchRequest('https://api.twitch.tv/helix/games', 'get', {
+			id: game,
 		});
 
-		return gameInfoResponse.data.data[0];
+		return gameInfoResponse.data[0];
 	} catch (e) {
 		console.error(e);
-		accessToken = await getAccessToken();
 		return null;
 	}
 }
 
+// Get the stream info for a streamer
 async function getStreamInfo(streamer: string) {
 	try {
-		const streamInfoResponse = await axios.get('https://api.twitch.tv/helix/streams', {
-			headers: {
-				Authorization: `Bearer ${accessToken}`,
-				'Client-Id': process.env.TWITCH_CLIENT_ID,
-			},
-			params: {
-				user_login: streamer,
-			},
+		const streamInfoResponse = await twitchRequest('https://api.twitch.tv/helix/streams', 'get', {
+			user_login: streamer,
 		});
 
-		return streamInfoResponse.data.data;
+		return streamInfoResponse.data;
 	} catch (e) {
 		console.error(e);
-		accessToken = await getAccessToken();
 		return null;
 	}
 }
 
-let accessToken: any = null;
-export const streams: string[] = [];
-export const streamData: Collection<String, StreamData> = new Collection();
-
 async function startTwitchWatcher() {
-	accessToken = await getAccessToken();
+	// Check for new streams every minute
 	setInterval(async () => {
-		const newStreams: any[] = [];
-
-		const streamer: string = 'ml7support';
+		const newStreams: string[] = [];
 		const streamInfo = await getStreamInfo(streamer);
 
 		if (streamInfo.length >= 1 && streams.indexOf(streamer) < 0) {
@@ -210,7 +234,7 @@ async function startTwitchWatcher() {
 				],
 			});
 		});
-	}, /*60000*/ 1000);
+	}, 60000);
 }
 
 client.login(process.env['BOT_TOKEN']);
